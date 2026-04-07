@@ -47,7 +47,16 @@ Each cat has 368 hand-drawn sprites across 8 directions:
 
 ## Build & Run
 
-### As .app bundle (recommended)
+### Download pre-built app
+
+Grab `CATAI.zip` from [Releases](https://github.com/wil-pe/CATAI/releases), unzip, then:
+
+```bash
+xattr -cr CATAI.app   # remove macOS quarantine (app is unsigned)
+open CATAI.app
+```
+
+### Build from source
 
 ```bash
 ./build.sh
