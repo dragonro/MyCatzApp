@@ -7,6 +7,7 @@ let RENDER_FPS: TimeInterval = 1.0 / 10.0
 let BEHAVIOR_SEC: TimeInterval = 1.0
 let DOCK_POLL_SEC: TimeInterval = 5.0
 let MOUSE_POLL_SEC: TimeInterval = 1.0 / 30.0
+let WINDOW_TRACK_SEC: TimeInterval = 1.0 / 30.0
 let RELOCATION_FADE_SEC: TimeInterval = 0.5
 let WALK_SPEED: CGFloat = 4
 let CATS_KEY = "catConfigs"
@@ -786,7 +787,10 @@ class CatInstance {
             winBounds = f
             y = f.maxY - CatInstance.titleBarH
             x = max(f.minX, min(x, f.maxX - displayW))
-            window.setFrameOrigin(NSPoint(x: x, y: y))
+            let newOrigin = NSPoint(x: x, y: y)
+            if window.frame.origin != newOrigin {
+                window.setFrameOrigin(newOrigin)
+            }
         } else { hideCompletely() }
     }
 
@@ -1352,7 +1356,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
             Timer.scheduledTimer(withTimeInterval: BEHAVIOR_SEC, repeats: true) { [weak self] _ in self?.behaviorTick() },
             Timer.scheduledTimer(withTimeInterval: DOCK_POLL_SEC, repeats: true) { [weak self] _ in self?.pollDock() },
             Timer.scheduledTimer(withTimeInterval: MOUSE_POLL_SEC, repeats: true) { [weak self] _ in self?.checkMouseForDock() },
-            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.trackWindows() },
+            Timer.scheduledTimer(withTimeInterval: WINDOW_TRACK_SEC, repeats: true) { [weak self] _ in self?.trackWindows() },
         ]
     }
 
