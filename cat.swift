@@ -18,7 +18,9 @@ let MODEL_KEY = "ollamaModel"
 let LANG_KEY = "catLang"
 let OLLAMA_URL = "http://localhost:11434"
 let AI_INTEGRATION_ENABLED = false
-let APP_VERSION = "1.0.2"
+let APP_VERSION = "1.0.3"
+let GITHUB_REPO_OWNER = "dragonro"
+let GITHUB_REPO_NAME = "MyCatzApp"
 let DEFAULT_SCALE: CGFloat = 1.0
 let MIN_SCALE: CGFloat = 0.5
 let MAX_SCALE: CGFloat = 3.0
@@ -58,6 +60,9 @@ struct L10n {
         "model": ["fr": "MODÈLE OLLAMA", "en": "OLLAMA MODEL", "es": "MODELO OLLAMA"],
         "quit": ["fr": "Quitter", "en": "Quit", "es": "Salir"],
         "settings": ["fr": "Réglages...", "en": "Settings...", "es": "Ajustes..."],
+        "check_updates": ["fr": "Vérifier les mises à jour...", "en": "Check for Updates...", "es": "Buscar actualizaciones..."],
+        "update_available": ["fr": "Mettre à jour vers", "en": "Update to", "es": "Actualizar a"],
+        "up_to_date": ["fr": "À jour", "en": "Up to date", "es": "Actualizado"],
         "talk": ["fr": "Parle au chat...", "en": "Talk to the cat...", "es": "Habla al gato..."],
         "hi": ["fr": "Miaou! ~(=^..^=)~", "en": "Meow! ~(=^..^=)~", "es": "¡Miau! ~(=^..^=)~"],
         "loading": ["fr": "Chargement...", "en": "Loading...", "es": "Cargando..."],
@@ -206,6 +211,26 @@ func effectiveColorDef(for cfg: CatConfig) -> CatColorDef? {
 // MARK: - Ollama API
 
 struct OllamaModel { let name: String }
+
+struct ReleaseInfo: Decodable {
+    struct Asset: Decodable {
+        let name: String
+        let browserDownloadURL: String
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+        }
+    }
+
+    let tagName: String
+    let assets: [Asset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case assets
+    }
+}
 
 func fetchOllamaModels(completion: @escaping ([OllamaModel]) -> Void) {
     if !AI_INTEGRATION_ENABLED { completion([]); return }
@@ -1486,6 +1511,9 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
 
     var statusItem: NSStatusItem!
     var settingsCtrl: SettingsWindowController?
+    var updateRelease: ReleaseInfo?
+    var isCheckingUpdates = false
+    var isInstallingUpdate = false
     var localMonitor: Any?
     var globalMonitor: Any?
     var activeDragCat: CatInstance?
@@ -1551,6 +1579,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
 
         // Status bar
         setupStatusItem()
+        checkForUpdates(silent: true)
 
         // Mouse events
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) {
@@ -1685,10 +1714,196 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let sItem = NSMenuItem(title: L10n.s("settings"), action: #selector(openSettings(_:)), keyEquivalent: ",")
         sItem.target = self; menu.addItem(sItem)
+        let uTitle: String
+        if isCheckingUpdates {
+            uTitle = L10n.s("loading")
+        } else if let rel = updateRelease {
+            uTitle = "\(L10n.s("update_available")) \(normalizedVersion(rel.tagName))"
+        } else {
+            uTitle = L10n.s("check_updates")
+        }
+        let uItem = NSMenuItem(title: uTitle, action: #selector(checkOrInstallUpdate(_:)), keyEquivalent: "u")
+        uItem.target = self
+        uItem.isEnabled = !isInstallingUpdate
+        menu.addItem(uItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: L10n.s("quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu; statusItem.button?.performClick(nil)
         DispatchQueue.main.async { self.statusItem.menu = nil }
+    }
+
+    func normalizedVersion(_ v: String) -> String {
+        v.hasPrefix("v") ? String(v.dropFirst()) : v
+    }
+
+    func compareVersions(_ a: String, _ b: String) -> ComparisonResult {
+        let pa = normalizedVersion(a).split(separator: ".").compactMap { Int($0) }
+        let pb = normalizedVersion(b).split(separator: ".").compactMap { Int($0) }
+        let n = max(pa.count, pb.count)
+        for i in 0..<n {
+            let va = i < pa.count ? pa[i] : 0
+            let vb = i < pb.count ? pb[i] : 0
+            if va < vb { return .orderedAscending }
+            if va > vb { return .orderedDescending }
+        }
+        return .orderedSame
+    }
+
+    func latestReleaseURL() -> URL? {
+        URL(string: "https://api.github.com/repos/\(GITHUB_REPO_OWNER)/\(GITHUB_REPO_NAME)/releases/latest")
+    }
+
+    func checkForUpdates(silent: Bool) {
+        guard !isCheckingUpdates else { return }
+        guard let url = latestReleaseURL() else { return }
+        isCheckingUpdates = true
+
+        var req = URLRequest(url: url)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isCheckingUpdates = false
+                guard error == nil, let data = data,
+                      let rel = try? JSONDecoder().decode(ReleaseInfo.self, from: data) else {
+                    if !silent { self.showSimpleAlert(title: "Update", message: "Unable to check updates.") }
+                    return
+                }
+                if self.compareVersions(APP_VERSION, rel.tagName) == .orderedAscending {
+                    self.updateRelease = rel
+                    if !silent {
+                        self.showSimpleAlert(title: "Update", message: "New version available: \(self.normalizedVersion(rel.tagName))")
+                    }
+                } else {
+                    self.updateRelease = nil
+                    if !silent {
+                        self.showSimpleAlert(title: L10n.s("up_to_date"), message: "Version \(APP_VERSION) is current.")
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    func showSimpleAlert(title: String, message: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = message
+        a.addButton(withTitle: "OK")
+        a.runModal()
+    }
+
+    @objc func checkOrInstallUpdate(_ sender: Any?) {
+        if let rel = updateRelease {
+            installUpdate(rel)
+        } else {
+            checkForUpdates(silent: false)
+        }
+    }
+
+    func installUpdate(_ rel: ReleaseInfo) {
+        guard !isInstallingUpdate else { return }
+        guard let asset = rel.assets.first(where: { $0.name.hasSuffix(".zip") }),
+              let downloadURL = URL(string: asset.browserDownloadURL) else {
+            showSimpleAlert(title: "Update", message: "No compatible update asset found.")
+            return
+        }
+        isInstallingUpdate = true
+
+        let fm = FileManager.default
+        let tmpRoot = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("MyCatzAppUpdate", isDirectory: true)
+        let zipURL = tmpRoot.appendingPathComponent("update.zip")
+        let unzipDir = tmpRoot.appendingPathComponent("unzipped", isDirectory: true)
+        try? fm.removeItem(at: tmpRoot)
+        try? fm.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+
+        URLSession.shared.downloadTask(with: downloadURL) { [weak self] localURL, _, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard error == nil, let localURL = localURL else {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Download failed.")
+                    return
+                }
+
+                do {
+                    try? fm.removeItem(at: zipURL)
+                    try fm.moveItem(at: localURL, to: zipURL)
+                    try? fm.removeItem(at: unzipDir)
+                    try fm.createDirectory(at: unzipDir, withIntermediateDirectories: true)
+                } catch {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Unable to prepare update files.")
+                    return
+                }
+
+                let unzip = Process()
+                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                unzip.arguments = ["-x", "-k", zipURL.path, unzipDir.path]
+                do {
+                    try unzip.run()
+                    unzip.waitUntilExit()
+                } catch {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Unable to extract update package.")
+                    return
+                }
+                guard unzip.terminationStatus == 0 else {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Update package extraction failed.")
+                    return
+                }
+
+                let downloadedApp = unzipDir.appendingPathComponent("MyCatzApp.app")
+                guard fm.fileExists(atPath: downloadedApp.path) else {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Downloaded package does not contain MyCatzApp.app.")
+                    return
+                }
+
+                let currentApp = Bundle.main.bundleURL
+                let parentDir = currentApp.deletingLastPathComponent()
+                guard fm.isWritableFile(atPath: parentDir.path) else {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "No write permission to install location.")
+                    return
+                }
+
+                let installerScript = tmpRoot.appendingPathComponent("install_update.sh")
+                let script = """
+                #!/bin/bash
+                set -e
+                SRC="$1"
+                DST="$2"
+                PID="$3"
+                while kill -0 "$PID" 2>/dev/null; do sleep 0.2; done
+                rm -rf "$DST"
+                /usr/bin/ditto "$SRC" "$DST"
+                open "$DST"
+                """
+                do {
+                    try script.write(to: installerScript, atomically: true, encoding: .utf8)
+                    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installerScript.path)
+                } catch {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Unable to prepare installer.")
+                    return
+                }
+
+                let installer = Process()
+                installer.executableURL = installerScript
+                installer.arguments = [downloadedApp.path, currentApp.path, "\(ProcessInfo.processInfo.processIdentifier)"]
+                do {
+                    try installer.run()
+                } catch {
+                    self.isInstallingUpdate = false
+                    self.showSimpleAlert(title: "Update", message: "Unable to launch updater.")
+                    return
+                }
+
+                NSApp.terminate(nil)
+            }
+        }.resume()
     }
 
     @objc func openSettings(_ sender: Any?) {
