@@ -432,12 +432,18 @@ func tintSprite(_ src: NSImage, color: CatColorDef) -> NSImage {
     return NSImage(cgImage: cgResult, size: src.size)
 }
 
-func loadTintAndScale(path: String, to size: NSSize, color: CatColorDef) -> NSImage {
+func makeMissingSprite(size: NSSize) -> NSImage {
+    NSImage(size: size, flipped: false) { r in
+        NSColor.magenta.withAlphaComponent(0.5).set()
+        NSBezierPath(rect: r).fill()
+        return true
+    }
+}
+
+func loadTintAndScale(path: String, to size: NSSize, color: CatColorDef) -> NSImage? {
     guard let source = NSImage(contentsOfFile: path) else {
-        NSLog("⚠️ Missing: \(path)")
-        return NSImage(size: size, flipped: false) { r in
-            NSColor.magenta.withAlphaComponent(0.5).set(); NSBezierPath(rect: r).fill(); return true
-        }
+        NSLog("⚠️ Missing or unreadable asset: \(path)")
+        return nil
     }
     let tinted = tintSprite(source, color: color)
     return NSImage(size: size, flipped: false) { rect in
@@ -851,20 +857,52 @@ class CatInstance {
 
     func loadAssets(meta: Metadata, catDir: String) {
         let size = NSSize(width: displayW, height: displayH)
-        rotations = [:]; animations = [:]
+
+        let previousRotations = rotations
+        let previousAnimations = animations
+        var nextRotations: [String: NSImage] = [:]
+        var nextAnimations: [String: [String: [NSImage]]] = [:]
+        var hadFailures = false
+
         for (dir, rel) in meta.frames.rotations {
-            rotations[dir] = loadTintAndScale(path: (catDir as NSString).appendingPathComponent(rel),
-                                              to: size, color: colorDef)
-        }
-        for (anim, dirs) in meta.frames.animations {
-            animations[anim] = [:]
-            for (dir, paths) in dirs {
-                animations[anim]![dir] = paths.map {
-                    loadTintAndScale(path: (catDir as NSString).appendingPathComponent($0),
-                                    to: size, color: colorDef)
-                }
+            let path = (catDir as NSString).appendingPathComponent(rel)
+            if let img = autoreleasepool(invoking: { loadTintAndScale(path: path, to: size, color: colorDef) }) {
+                nextRotations[dir] = img
+            } else {
+                hadFailures = true
             }
         }
+        for (anim, dirs) in meta.frames.animations {
+            nextAnimations[anim] = [:]
+            for (dir, paths) in dirs {
+                var loadedFrames: [NSImage] = []
+                loadedFrames.reserveCapacity(paths.count)
+                for relPath in paths {
+                    let path = (catDir as NSString).appendingPathComponent(relPath)
+                    if let frame = autoreleasepool(invoking: { loadTintAndScale(path: path, to: size, color: colorDef) }) {
+                        loadedFrames.append(frame)
+                    } else {
+                        hadFailures = true
+                    }
+                }
+                nextAnimations[anim]![dir] = loadedFrames
+            }
+        }
+
+        if hadFailures && !previousRotations.isEmpty {
+            NSLog("⚠️ Asset reload failed; keeping previously loaded sprites")
+            rotations = previousRotations
+            animations = previousAnimations
+            return
+        }
+
+        // Initial load fallback if required assets are unavailable.
+        for dir in meta.frames.rotations.keys where nextRotations[dir] == nil {
+            nextRotations[dir] = makeMissingSprite(size: size)
+        }
+
+        rotations = nextRotations
+        animations = nextAnimations
     }
 
     func applyScale(newW: CGFloat, newH: CGFloat, meta: Metadata, catDir: String) {
