@@ -9,7 +9,9 @@ let DOCK_POLL_SEC: TimeInterval = 5.0
 let MOUSE_POLL_SEC: TimeInterval = 1.0 / 30.0
 let WINDOW_TRACK_SEC: TimeInterval = 1.0 / 30.0
 let RELOCATION_FADE_SEC: TimeInterval = 0.5
+let CUSTOM_COLOR_LUMINANCE_DIVISOR: CGFloat = 2.4
 let WALK_SPEED: CGFloat = 4
+let SETTINGS_PREVIEW_TAG = 9001
 let CATS_KEY = "catConfigs"
 let SCALE_KEY = "catScale"
 let MODEL_KEY = "ollamaModel"
@@ -326,9 +328,9 @@ func tintSprite(_ src: NSImage, color: CatColorDef) -> NSImage {
 
     ctx.draw(cgSrc, in: CGRect(x: 0, y: 0, width: w, height: h))
     guard let ptr = ctx.data?.bindMemory(to: UInt8.self, capacity: w * h * 4) else { return src }
-    var customR: CGFloat = 0, customG: CGFloat = 0, customB: CGFloat = 0
-    if color.id == "custom", let custom = color.color.usingColorSpace(.sRGB) {
-        custom.getRed(&customR, green: &customG, blue: &customB, alpha: nil)
+    var customHue: CGFloat = 0, customSat: CGFloat = 0, customBri: CGFloat = 0
+    if color.id == "custom", let custom = color.color.usingColorSpace(.deviceRGB) {
+        custom.getHue(&customHue, saturation: &customSat, brightness: &customBri, alpha: nil)
     }
 
     for i in 0..<(w * h) {
@@ -340,17 +342,6 @@ func tintSprite(_ src: NSImage, color: CatColorDef) -> NSImage {
         let r = CGFloat(ptr[o]) / (255.0 * a)
         let g = CGFloat(ptr[o + 1]) / (255.0 * a)
         let b = CGFloat(ptr[o + 2]) / (255.0 * a)
-
-        if color.id == "custom" {
-            let lum = max(0, min(1, (r + g + b) / 3.0))
-            let nr = customR * lum
-            let ng = customG * lum
-            let nbb = customB * lum
-            ptr[o]     = UInt8(max(0, min(255, nr * a * 255)))
-            ptr[o + 1] = UInt8(max(0, min(255, ng * a * 255)))
-            ptr[o + 2] = UInt8(max(0, min(255, nbb * a * 255)))
-            continue
-        }
 
         // RGB → HSB (manual, no NSColor needed)
         let mx = max(r, g, b), mn = min(r, g, b)
@@ -365,9 +356,18 @@ func tintSprite(_ src: NSImage, color: CatColorDef) -> NSImage {
         let ss: CGFloat = mx > 0.001 ? delta / mx : 0
         let bb: CGFloat = mx
 
-        let nh = fmod(hh + color.hueShift + 1, 1)
-        let ns = max(0, min(1, ss * color.satMul))
-        let nb = max(0, min(1, bb + color.briOff))
+        let nh: CGFloat
+        let ns: CGFloat
+        let nb: CGFloat
+        if color.id == "custom" {
+            nh = customHue
+            ns = max(0, min(1, customSat))
+            nb = max(0, min(1, bb))
+        } else {
+            nh = fmod(hh + color.hueShift + 1, 1)
+            ns = max(0, min(1, ss * color.satMul))
+            nb = max(0, min(1, bb + color.briOff))
+        }
 
         // HSB → RGB
         let c2 = nb * ns
@@ -1298,6 +1298,7 @@ class SettingsWindowController {
             if let img = getPreview?(selId) {
                 let pv = NSImageView(frame: NSRect(x: (W - 48) / 2, y: H - 230, width: 48, height: 48))
                 pv.imageScaling = .scaleProportionallyUpOrDown; pv.image = img
+                pv.tag = SETTINGS_PREVIEW_TAG
                 content.addSubview(pv)
             }
 
@@ -1561,7 +1562,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
 
     func removeCat(colorId: String) {
         guard catConfigs.count > 1 else { return }
-        guard let idx = catInstances.firstIndex(where: { $0.colorDef.id == colorId }) else { return }
+        guard let idx = catInstances.firstIndex(where: { $0.config.colorId == colorId }) else { return }
         let cat = catInstances[idx]
         cat.cleanup(); catInstances.remove(at: idx)
         catConfigs.removeAll { $0.colorId == colorId }; saveConfigs(catConfigs)
@@ -1574,7 +1575,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
     func renameCat(colorId: String, name: String) {
         guard let idx = catConfigs.firstIndex(where: { $0.colorId == colorId }) else { return }
         catConfigs[idx].name = name; saveConfigs(catConfigs)
-        if let inst = catInstances.first(where: { $0.colorDef.id == colorId }) {
+        if let inst = catInstances.first(where: { $0.config.colorId == colorId }) {
             inst.config.name = name; inst.updateSystemPrompt(lang: L10n.lang)
         }
     }
@@ -1588,7 +1589,15 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         let inst = catInstances[instIdx]
         inst.config.customColorHex = catConfigs[cfgIdx].customColorHex
         inst.updateColor(newDef, meta: meta, catDir: catDir, lang: L10n.lang)
-        settingsCtrl?.refresh()
+
+        if settingsCtrl?.selectedColorId == colorId,
+           let preview = settingsCtrl?.window.contentView?.viewWithTag(SETTINGS_PREVIEW_TAG) as? NSImageView {
+            preview.image = inst.rotations["south"] ?? inst.currentImage()
+        }
+
+        if !NSColorPanel.shared.isVisible {
+            settingsCtrl?.refresh()
+        }
     }
 
     // MARK: Size & Model
