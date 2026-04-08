@@ -7,6 +7,7 @@ let RENDER_FPS: TimeInterval = 1.0 / 10.0
 let BEHAVIOR_SEC: TimeInterval = 1.0
 let DOCK_POLL_SEC: TimeInterval = 5.0
 let MOUSE_POLL_SEC: TimeInterval = 1.0 / 30.0
+let RELOCATION_FADE_SEC: TimeInterval = 0.5
 let WALK_SPEED: CGFloat = 4
 let CATS_KEY = "catConfigs"
 let SCALE_KEY = "catScale"
@@ -615,6 +616,7 @@ class CatInstance {
     enum PosMode { case onDock, onWindow, hidden }
     var posMode: PosMode = .hidden
     var winBounds: NSRect?
+    var isRelocating = false
 
     var chatBubble: ChatBubbleController?
     var ollamaChat: OllamaChat!
@@ -755,27 +757,26 @@ class CatInstance {
     }
 
     func showOnDock(dockH: CGFloat) {
-        posMode = .onDock
         // Pieds du chat posés sur le dock (pas au-dessus)
         y = dockH - displayH * 0.15
-        window.setFrameOrigin(NSPoint(x: x, y: y)); window.orderFront(nil)
+        relocateWithFade(to: NSPoint(x: x, y: y), newMode: .onDock)
     }
 
     static let titleBarH: CGFloat = 28
 
     func moveToWindow(_ bounds: NSRect, index: Int, total: Int) {
-        winBounds = bounds; posMode = .onWindow
+        winBounds = bounds
         let spacing = bounds.width / CGFloat(total + 1)
         x = bounds.origin.x + spacing * CGFloat(index + 1) - displayW / 2
         x = max(bounds.minX, min(x, bounds.maxX - displayW))
         // Pieds posés sur la barre de titre : bas du sprite = bas de la title bar
         y = bounds.maxY - CatInstance.titleBarH
-        window.setFrameOrigin(NSPoint(x: x, y: y)); window.orderFront(nil)
+        relocateWithFade(to: NSPoint(x: x, y: y), newMode: .onWindow)
         state = .idle; frameIndex = 0; idleTicks = 0; direction = "south"
     }
 
     func hideCompletely() {
-        posMode = .hidden; chatBubble?.hide(); window.orderOut(nil)
+        posMode = .hidden; chatBubble?.hide(); window.orderOut(nil); window.alphaValue = 1
         state = .idle; frameIndex = 0; idleTicks = 0
     }
 
@@ -888,6 +889,43 @@ class CatInstance {
     }
 
     func cleanup() { chatBubble?.hide(); hideMeow(); window.orderOut(nil) }
+
+    func relocateWithFade(to newOrigin: NSPoint, newMode: PosMode) {
+        if isRelocating {
+            posMode = newMode
+            window.alphaValue = 1
+            window.setFrameOrigin(newOrigin)
+            window.orderFront(nil)
+            return
+        }
+
+        let previousMode = posMode
+        posMode = newMode
+        let shouldAnimate = window.isVisible && previousMode != .hidden && previousMode != newMode
+
+        if !shouldAnimate {
+            window.alphaValue = 1
+            window.setFrameOrigin(newOrigin)
+            window.orderFront(nil)
+            return
+        }
+
+        isRelocating = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = RELOCATION_FADE_SEC
+            window.animator().alphaValue = 0
+        }) { [weak self] in
+            guard let self = self else { return }
+            self.window.setFrameOrigin(newOrigin)
+            self.window.orderFront(nil)
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = RELOCATION_FADE_SEC
+                self.window.animator().alphaValue = 1
+            }) { [weak self] in
+                self?.isRelocating = false
+            }
+        }
+    }
 }
 
 // MARK: - Color Bubbles View
