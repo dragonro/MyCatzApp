@@ -24,6 +24,18 @@ let MIN_SCALE: CGFloat = 0.5
 let MAX_SCALE: CGFloat = 3.0
 let MEM_MAX = 20
 
+let WALK_PROBABILITY: Double = 0.25
+let SLEEP_PROBABILITY_AFTER_IDLE: Double = 0.5
+let EAT_PROBABILITY: Double = 0.25
+let DRINK_PROBABILITY: Double = 0.25
+let MEOW_PROBABILITY: Double = 0.03
+
+// let WALK_PROBABILITY: Double = 0.25
+// let SLEEP_PROBABILITY_AFTER_IDLE: Double = 0.5
+// let EAT_PROBABILITY: Double = 0.05
+// let DRINK_PROBABILITY: Double = 0.05
+// let MEOW_PROBABILITY: Double = 0.03
+
 enum CatState { case idle, walking, eating, drinking, angry, sleeping, wakingUp }
 
 let animKeys: [CatState: String] = [
@@ -891,9 +903,9 @@ class CatInstance {
         if state == .idle {
             idleTicks += 1
             let r = Double.random(in: 0..<1)
-            if idleTicks > 15 && r < 0.05 {
+            if idleTicks > 15 && r < SLEEP_PROBABILITY_AFTER_IDLE {
                 state = .sleeping; idleTicks = 0
-            } else if r < 0.25 {
+            } else if r < SLEEP_PROBABILITY_AFTER_IDLE + WALK_PROBABILITY {
                 if posMode == .onDock {
                     state = .walking; frameIndex = 0
                     destX = CGFloat.random(in: displayW...(max(displayW + 1, screenW - displayW)))
@@ -902,9 +914,13 @@ class CatInstance {
                     let lo = wb.minX; let hi = max(lo + displayW, wb.maxX - displayW)
                     destX = CGFloat.random(in: lo...hi)
                 }
-            } else if r < 0.30 { state = .eating; frameIndex = 0 }
-            else if r < 0.35 { state = .drinking; frameIndex = 0 }
-            else if r < 0.38 { showRandomMeow() }
+            } else if r < SLEEP_PROBABILITY_AFTER_IDLE + WALK_PROBABILITY + EAT_PROBABILITY {
+                state = .eating; frameIndex = 0
+            } else if r < SLEEP_PROBABILITY_AFTER_IDLE + WALK_PROBABILITY + EAT_PROBABILITY + DRINK_PROBABILITY {
+                state = .drinking; frameIndex = 0
+            } else if r < SLEEP_PROBABILITY_AFTER_IDLE + WALK_PROBABILITY + EAT_PROBABILITY + DRINK_PROBABILITY + MEOW_PROBABILITY {
+                showRandomMeow()
+            }
         } else if state == .sleeping {
             idleTicks += 1
             if idleTicks > Int.random(in: 5...15) { state = .wakingUp; frameIndex = 0; idleTicks = 0 }
