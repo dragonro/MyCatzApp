@@ -138,6 +138,7 @@ struct CatConfig: Codable {
     var id: String
     var colorId: String
     var name: String
+    var customColorHex: String?
 }
 
 func loadConfigs() -> [CatConfig] {
@@ -159,6 +160,34 @@ func saveMemory(_ catId: String, _ msgs: [[String: String]]) {
     if let d = try? JSONSerialization.data(withJSONObject: s) { UserDefaults.standard.set(d, forKey: "mem_\(catId)") }
 }
 func deleteMemory(_ catId: String) { UserDefaults.standard.removeObject(forKey: "mem_\(catId)") }
+
+func hexString(from color: NSColor) -> String? {
+    guard let c = color.usingColorSpace(.sRGB) else { return nil }
+    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    c.getRed(&r, green: &g, blue: &b, alpha: &a)
+    return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+}
+
+func color(fromHex hex: String?) -> NSColor? {
+    guard var h = hex?.trimmingCharacters(in: .whitespacesAndNewlines), !h.isEmpty else { return nil }
+    if h.hasPrefix("#") { h.removeFirst() }
+    guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+    let r = CGFloat((v >> 16) & 0xFF) / 255.0
+    let g = CGFloat((v >> 8) & 0xFF) / 255.0
+    let b = CGFloat(v & 0xFF) / 255.0
+    return NSColor(red: r, green: g, blue: b, alpha: 1)
+}
+
+func effectiveColorDef(for cfg: CatConfig) -> CatColorDef? {
+    guard let base = colorDef(cfg.colorId) else { return nil }
+    guard let custom = color(fromHex: cfg.customColorHex) else { return base }
+    return CatColorDef(
+        id: "custom",
+        color: custom,
+        hueShift: 0, satMul: 1, briOff: 0,
+        traits: base.traits, names: base.names, skills: base.skills
+    )
+}
 
 // MARK: - Ollama API
 
@@ -297,6 +326,10 @@ func tintSprite(_ src: NSImage, color: CatColorDef) -> NSImage {
 
     ctx.draw(cgSrc, in: CGRect(x: 0, y: 0, width: w, height: h))
     guard let ptr = ctx.data?.bindMemory(to: UInt8.self, capacity: w * h * 4) else { return src }
+    var customR: CGFloat = 0, customG: CGFloat = 0, customB: CGFloat = 0
+    if color.id == "custom", let custom = color.color.usingColorSpace(.sRGB) {
+        custom.getRed(&customR, green: &customG, blue: &customB, alpha: nil)
+    }
 
     for i in 0..<(w * h) {
         let o = i * 4
@@ -307,6 +340,17 @@ func tintSprite(_ src: NSImage, color: CatColorDef) -> NSImage {
         let r = CGFloat(ptr[o]) / (255.0 * a)
         let g = CGFloat(ptr[o + 1]) / (255.0 * a)
         let b = CGFloat(ptr[o + 2]) / (255.0 * a)
+
+        if color.id == "custom" {
+            let lum = max(0, min(1, (r + g + b) / 3.0))
+            let nr = customR * lum
+            let ng = customG * lum
+            let nbb = customB * lum
+            ptr[o]     = UInt8(max(0, min(255, nr * a * 255)))
+            ptr[o + 1] = UInt8(max(0, min(255, ng * a * 255)))
+            ptr[o + 2] = UInt8(max(0, min(255, nbb * a * 255)))
+            continue
+        }
 
         // RGB → HSB (manual, no NSColor needed)
         let mx = max(r, g, b), mn = min(r, g, b)
@@ -458,6 +502,7 @@ class ModalColorWell: NSColorWell {
     weak var ownerWindow: NSWindow?
     private var blockView: NSView?
     private var colorPanelObserver: NSObjectProtocol?
+    private var colorDidChangeObserver: NSObjectProtocol?
     private var localEventMonitor: Any?
 
     class BlockingView: NSView {
@@ -509,11 +554,17 @@ class ModalColorWell: NSColorWell {
         let panel = NSColorPanel.shared
         panel.level = .modalPanel
         panel.hidesOnDeactivate = false
+        panel.isContinuous = true
 
         if let parent = panel.parent { parent.removeChildWindow(panel) }
         if let ownerWindow = ownerWindow { ownerWindow.addChildWindow(panel, ordered: .above) }
         addBlockingOverlay()
         installEventMonitor()
+        colorDidChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSColorPanel.colorDidChangeNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            self?.panelColorChanged(panel)
+        }
         colorPanelObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: panel, queue: .main
         ) { [weak self] _ in
@@ -529,12 +580,23 @@ class ModalColorWell: NSColorWell {
         super.deactivate()
         let panel = NSColorPanel.shared
         if let parent = panel.parent { parent.removeChildWindow(panel) }
+        if let obs = colorDidChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            colorDidChangeObserver = nil
+        }
         if let obs = colorPanelObserver {
             NotificationCenter.default.removeObserver(obs)
             colorPanelObserver = nil
         }
         removeBlockingOverlay()
         removeEventMonitor()
+    }
+
+    @objc func panelColorChanged(_ sender: NSColorPanel) {
+        color = sender.color
+        if isContinuous, let action = action {
+            _ = sendAction(action, to: target)
+        }
     }
 }
 
@@ -1146,7 +1208,7 @@ class SettingsWindowController {
     var onAdd: ((String) -> Void)?
     var onRemove: ((String) -> Void)?
     var onRename: ((String, String) -> Void)?
-    var onColorChanged: ((String, String) -> Void)?
+    var onColorChanged: ((String, NSColor) -> Void)?
     var onScaleChanged: ((CGFloat) -> Void)?
     var onModelChanged: ((String) -> Void)?
     var onLangChanged: ((String) -> Void)?
@@ -1258,8 +1320,8 @@ class SettingsWindowController {
 
             let colorWell = ModalColorWell(frame: NSRect(x: W - 24 - colorBtnW, y: H - 262, width: colorBtnW, height: 24))
             colorWell.ownerWindow = window
-            colorWell.color = cd.color
-            colorWell.isContinuous = false
+            colorWell.color = color(fromHex: cfg?.customColorHex) ?? cd.color
+            colorWell.isContinuous = true
             colorWell.target = self
             colorWell.action = #selector(colorSelected(_:))
             content.addSubview(colorWell)
@@ -1343,37 +1405,12 @@ class SettingsWindowController {
     }
 
     @objc func colorSelected(_ sender: Any?) {
-        guard let oldColorId = selectedColorId else { return }
+        guard let colorId = selectedColorId else { return }
         let pickedColor: NSColor
         if let well = sender as? NSColorWell { pickedColor = well.color }
         else if let panel = sender as? NSColorPanel { pickedColor = panel.color }
         else { pickedColor = NSColorPanel.shared.color }
-
-        guard let newColorId = nearestCatColorId(for: pickedColor) else { return }
-        guard newColorId != oldColorId else { return }
-        selectedColorId = newColorId
-        onColorChanged?(oldColorId, newColorId)
-    }
-
-    func nearestCatColorId(for color: NSColor) -> String? {
-        guard let target = color.usingColorSpace(.sRGB) else { return nil }
-        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
-        target.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
-
-        var bestId: String?
-        var bestDist = CGFloat.greatestFiniteMagnitude
-        for c in catColors {
-            guard let ref = c.color.usingColorSpace(.sRGB) else { continue }
-            var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
-            ref.getRed(&rr, green: &rg, blue: &rb, alpha: &ra)
-            let dr = tr - rr, dg = tg - rg, db = tb - rb
-            let dist = dr * dr + dg * dg + db * db
-            if dist < bestDist {
-                bestDist = dist
-                bestId = c.id
-            }
-        }
-        return bestId
+        onColorChanged?(colorId, pickedColor)
     }
 
     func show() {
@@ -1493,7 +1530,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Cat Management
 
     func createInstance(config: CatConfig, index: Int) {
-        guard let cd = colorDef(config.colorId) else { return }
+        guard let cd = effectiveColorDef(for: config) else { return }
         let inst = CatInstance(config: config, colorDef: cd)
         let startX = screenW / 2 - displayW / 2 + CGFloat(index) * displayW * 1.5
         inst.setup(meta: meta, catDir: catDir, dw: displayW, dh: displayH,
@@ -1542,24 +1579,15 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func changeCatColor(from oldColorId: String, to newColorId: String) {
-        guard oldColorId != newColorId else { return }
-        guard let cfgIdx = catConfigs.firstIndex(where: { $0.colorId == oldColorId }) else { return }
-        guard !catConfigs.contains(where: { $0.colorId == newColorId }) else {
-            settingsCtrl?.selectedColorId = oldColorId
-            settingsCtrl?.refresh()
-            return
-        }
-        guard let newDef = colorDef(newColorId) else { return }
-        guard let instIdx = catInstances.firstIndex(where: { $0.colorDef.id == oldColorId }) else { return }
-
-        catConfigs[cfgIdx].colorId = newColorId
+    func changeCatColor(colorId: String, to pickedColor: NSColor) {
+        guard let cfgIdx = catConfigs.firstIndex(where: { $0.colorId == colorId }) else { return }
+        catConfigs[cfgIdx].customColorHex = hexString(from: pickedColor)
         saveConfigs(catConfigs)
+        guard let newDef = effectiveColorDef(for: catConfigs[cfgIdx]) else { return }
+        guard let instIdx = catInstances.firstIndex(where: { $0.colorDef.id == colorId || $0.config.id == catConfigs[cfgIdx].id }) else { return }
         let inst = catInstances[instIdx]
-        inst.config.colorId = newColorId
+        inst.config.customColorHex = catConfigs[cfgIdx].customColorHex
         inst.updateColor(newDef, meta: meta, catDir: catDir, lang: L10n.lang)
-
-        settingsCtrl?.selectedColorId = newColorId
         settingsCtrl?.refresh()
     }
 
@@ -1616,7 +1644,9 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         let ctrl = settingsCtrl!
         ctrl.getConfigs = { [weak self] in self?.catConfigs ?? [] }
         ctrl.getPreview = { [weak self] colorId in
-            guard let self = self, let cd = colorDef(colorId) else { return nil }
+            guard let self = self else { return nil }
+            guard let cfg = self.catConfigs.first(where: { $0.colorId == colorId }) else { return nil }
+            guard let cd = effectiveColorDef(for: cfg) else { return nil }
             guard let southRel = self.meta.frames.rotations["south"] else { return nil }
             let path = (self.catDir as NSString).appendingPathComponent(southRel)
             guard let img = NSImage(contentsOfFile: path) else { return nil }
@@ -1625,8 +1655,8 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         ctrl.onAdd = { [weak self] colorId in self?.addCat(colorId: colorId) }
         ctrl.onRemove = { [weak self] colorId in self?.removeCat(colorId: colorId) }
         ctrl.onRename = { [weak self] colorId, name in self?.renameCat(colorId: colorId, name: name) }
-        ctrl.onColorChanged = { [weak self] oldColorId, newColorId in
-            self?.changeCatColor(from: oldColorId, to: newColorId)
+        ctrl.onColorChanged = { [weak self] colorId, pickedColor in
+            self?.changeCatColor(colorId: colorId, to: pickedColor)
         }
         ctrl.onScaleChanged = { [weak self] v in self?.applyNewScale(v) }
         ctrl.onModelChanged = { [weak self] m in self?.setModel(m) }
