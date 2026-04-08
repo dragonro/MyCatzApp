@@ -1,116 +1,93 @@
-# CATAI
+# MyCatzApp
 
-Virtual desktop pet cats for macOS — pixel art cats that live on your dock and chat with you via Ollama LLM.
+Pixel-art desktop pet cats for macOS.
 
-![Swift](https://img.shields.io/badge/Swift-native-orange) ![macOS](https://img.shields.io/badge/macOS-14%2B-blue) ![Ollama](https://img.shields.io/badge/Ollama-LLM-green)
+![Swift](https://img.shields.io/badge/Swift-native-orange) ![macOS](https://img.shields.io/badge/macOS-14%2B-blue)
 
-![CATAI Screenshot](screenshot.jpeg)
+![MyCatzApp Screenshot](screenshot.jpeg)
+
+## Project Origin
+
+This project started as a fork of [wil-pe/CATAI](https://github.com/wil-pe/CATAI), then evolved with significant behavior, UI, and packaging changes from that point.
 
 ## Features
 
-- **Dock companion** — Cats walk along your dock with pixel-perfect animations
-- **Window perching** — When dock auto-hides, cats teleport to sit on top of your active window
-- **Multi-cat** — Up to 6 cats with distinct colors and personalities
-- **AI chat** — Click a cat to open a pixel-art chat bubble, powered by [Ollama](https://ollama.ai)
-- **Random meows** — Cats spontaneously say "Miaou~", "Prrr...", "Mrrp!" in cute speech bubbles
-- **Pixel art UI** — Settings panel, chat bubbles, and controls all in retro pixel style
-- **Menu bar icon** — 🐱 icon with quick access to settings and quit
-- **Retina ready** — Nearest-neighbor scaling keeps pixel art crisp on HiDPI displays
-- **Multilingual** — French, English, Spanish (switch with flag buttons)
-
-## Cat Personalities
-
-| Color | Default Name | Personality | Skill |
-|-------|-------------|-------------|-------|
-| 🟠 Orange | Citrouille | Playful & mischievous | Jokes & puns |
-| ⚫ Black | Ombre | Mysterious & philosophical | Deep questions |
-| ⚪ White | Neige | Elegant & poetic | Poetry & grace |
-| 🔘 Grey | Einstein | Wise & scholarly | Science facts |
-| 🟤 Brown | Indiana | Adventurous storyteller | Epic tales |
-| 🟡 Cream | Caramel | Cuddly & comforting | Emotional support |
+- **Window companion cats** — Cats perch and move on application windows
+- **Multi-cat management** — Add/remove cats and manage them from Settings
+- **Custom color picker** — Change each cat color from Settings with live updates
+- **Random meows** — Cats occasionally display cute meow bubbles
+- **Pixel art UI** — Retro-styled settings and controls
+- **Menu bar control** — Quick access to Settings and Quit from the 🐱 icon
+- **Retina-ready rendering** — Nearest-neighbor scaling for crisp sprites
+- **Multilingual UI** — French, English, Spanish
 
 ## Animations
 
-Each cat has 368 hand-drawn sprites across 8 directions:
+Each cat uses hand-drawn sprites across 8 directions:
 
-- **Walking** — 8 frames per direction
-- **Eating** — 11 frames per direction
-- **Drinking** — 8 frames per direction
-- **Angry** — 9 frames per direction
-- **Waking up** — 9 frames per direction
-- **Idle / Sleeping** — Static rotation sprites
+- **Walking**
+- **Eating**
+- **Drinking**
+- **Angry**
+- **Waking up**
+- **Idle / Sleeping**
 
 ## Requirements
 
 - macOS 14+ (Apple Silicon or Intel)
-- [Ollama](https://ollama.ai) running locally (for chat feature, optional)
 
 ## Build & Run
-
-### Download pre-built app
-
-Grab `CATAI.zip` from [Releases](https://github.com/wil-pe/CATAI/releases), unzip, then:
-
-```bash
-xattr -cr CATAI.app   # remove macOS quarantine (app is unsigned)
-open CATAI.app
-```
 
 ### Build from source
 
 ```bash
 ./build.sh
-open CATAI.app
+open MyCatzApp.app
 ```
 
-### As standalone binary
+### Run helper script
 
 ```bash
-swiftc -O -o cat cat.swift -framework AppKit -framework Foundation
-./cat
+./run.sh
 ```
 
-No Xcode project, no dependencies, no package manager — just one Swift file.
+### Download release
+
+Get the latest zip from [Releases](https://github.com/dragonro/MyCatzApp/releases), then:
+
+```bash
+xattr -cr MyCatzApp.app
+open MyCatzApp.app
+```
 
 ## Settings
 
-Click the 🐱 menu bar icon → Settings:
+Open from the menu bar icon:
 
-- **Language** — 🇫🇷 🇬🇧 🇪🇸 click a flag to switch
-- **Cats** — Click a color bubble to add a cat, click × to remove
+- **Language** — Switch UI language with flags
+- **Cats** — Add/remove cats
 - **Name** — Rename each cat
-- **Size** — Pixel art slider to scale cats
-- **Ollama model** — Select from your installed models
+- **Color** — Pick a custom cat color
+- **Size** — Scale cats
 
 ## How It Works
 
-- Single native Swift file (~1500 lines), no external dependencies
-- `NSWindow` with transparent background for overlay rendering
-- `CGWindowListCopyWindowInfo` for detecting frontmost windows
-- Dock auto-hide detection via mouse position polling at 30 FPS
-- Color tinting via direct pixel manipulation in sRGB `CGContext`
-- Ollama streaming chat via `URLSessionDataDelegate`
-- Conversation memory persisted in `UserDefaults`
+- Native macOS app in Swift
+- Transparent `NSWindow` overlays for cat rendering
+- Window tracking to keep cats aligned to active windows
+- Pixel tinting pipeline for palette/custom colors
+- Config and memory persisted in `UserDefaults`
 
 ## Project Structure
 
-```
+```text
 .
-├── cat.swift              # Entire application (single file)
-├── cat                    # Compiled binary
+├── cat.swift              # Main application source
+├── build.sh               # Builds MyCatzApp.app
+├── run.sh                 # Build/run helper
 └── cute_orange_cat/       # Sprite assets
-    ├── metadata.json      # Animation & rotation definitions
-    ├── rotations/         # 8 static direction sprites (68x68 PNG)
-    └── animations/        # 5 animations × 8 directions × 8-11 frames
-        ├── angry/
-        ├── drinking/
-        ├── eating/
-        ├── running-8-frames/
-        └── waking-getting-up/
 ```
 
 ## License
 
 MIT
-
----
