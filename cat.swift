@@ -13,6 +13,8 @@ let SCALE_KEY = "catScale"
 let MODEL_KEY = "ollamaModel"
 let LANG_KEY = "catLang"
 let OLLAMA_URL = "http://localhost:11434"
+let AI_INTEGRATION_ENABLED = false
+let APP_VERSION = "1.0.1"
 let DEFAULT_SCALE: CGFloat = 1.0
 let MIN_SCALE: CGFloat = 0.5
 let MAX_SCALE: CGFloat = 3.0
@@ -44,6 +46,7 @@ struct L10n {
         "hi": ["fr": "Miaou! ~(=^..^=)~", "en": "Meow! ~(=^..^=)~", "es": "¡Miau! ~(=^..^=)~"],
         "loading": ["fr": "Chargement...", "en": "Loading...", "es": "Cargando..."],
         "no_ollama": ["fr": "(Ollama indisponible)", "en": "(Ollama unavailable)", "es": "(Ollama no disponible)"],
+        "ai_disabled": ["fr": "(IA désactivée)", "en": "(AI disabled)", "es": "(IA desactivada)"],
         "err": ["fr": "Mrrp... pas de connexion 😿", "en": "Mrrp... no connection 😿", "es": "Mrrp... sin conexión 😿"],
         "lang_label": ["fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"],
     ]
@@ -111,7 +114,7 @@ let catColors: [CatColorDef] = [
     CatColorDef(id: "cream", color: NSColor(red: 0.95, green: 0.88, blue: 0.75, alpha: 1),
         hueShift: 0.02, satMul: 0.3, briOff: 0.15,
         traits: ["fr": "câlin et réconfortant", "en": "cuddly and comforting", "es": "cariñoso y reconfortante"],
-        names: ["fr": "Caramel", "en": "Caramel", "es": "Caramelo"],
+        names: ["fr": "Blue", "en": "Blue", "es": "Caramelo"],
         skills: ["fr": "Tu remontes le moral avec tendresse.", "en": "You comfort with tenderness.", "es": "Animas con ternura."]),
 ]
 
@@ -160,6 +163,7 @@ func deleteMemory(_ catId: String) { UserDefaults.standard.removeObject(forKey: 
 struct OllamaModel { let name: String }
 
 func fetchOllamaModels(completion: @escaping ([OllamaModel]) -> Void) {
+    if !AI_INTEGRATION_ENABLED { completion([]); return }
     guard let url = URL(string: "\(OLLAMA_URL)/api/tags") else { completion([]); return }
     URLSession.shared.dataTask(with: url) { data, _, _ in
         guard let data = data,
@@ -183,6 +187,17 @@ class OllamaChat {
               onDone: @escaping () -> Void, onError: ((String) -> Void)? = nil) {
         messages.append(["role": "user", "content": text])
         if messages.count > MEM_MAX * 2 + 1 { messages = [messages[0]] + Array(messages.suffix(MEM_MAX * 2)) }
+
+        if !AI_INTEGRATION_ENABLED {
+            let reply = L10n.randomMeow()
+            messages.append(["role": "assistant", "content": reply])
+            DispatchQueue.main.async {
+                onToken(reply)
+                onDone()
+            }
+            return
+        }
+
         isStreaming = true
 
         guard let url = URL(string: "\(OLLAMA_URL)/api/chat") else { isStreaming = false; onDone(); return }
@@ -416,13 +431,9 @@ class PixelLabel: NSView {
     var wraps = false
 
     override func draw(_ dirtyRect: NSRect) {
-        let style = NSMutableParagraphStyle()
-        style.alignment = alignment
-        style.lineBreakMode = wraps ? .byWordWrapping : .byClipping
         let attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: textColor,
             .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold),
-            .paragraphStyle: style,
         ]
         let str = NSAttributedString(string: text, attributes: attrs)
         if wraps {
@@ -1023,7 +1034,7 @@ class SettingsWindowController {
                 contentRect: NSRect(x: (screenFrame.width - W) / 2,
                                     y: (screenFrame.height - H) / 2, width: W, height: H),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "~ Cat Settings ~"
+            window.title = "Cat Settings v\(APP_VERSION)"
             window.level = .floating; window.isReleasedWhenClosed = false
             window.backgroundColor = NSColor(red: 0.95, green: 0.9, blue: 0.8, alpha: 1)
         }
@@ -1149,28 +1160,36 @@ class SettingsWindowController {
         }
         content.addSubview(slider)
 
-        // Model section
-        let modelTitle = PixelLabel()
-        modelTitle.text = L10n.s("model"); modelTitle.fontSize = 12
-        modelTitle.frame = NSRect(x: 20, y: 82, width: W - 40, height: 20)
-        content.addSubview(modelTitle)
+        if AI_INTEGRATION_ENABLED {
+            // Model section
+            let modelTitle = PixelLabel()
+            modelTitle.text = L10n.s("model"); modelTitle.fontSize = 12
+            modelTitle.frame = NSRect(x: 20, y: 82, width: W - 40, height: 20)
+            content.addSubview(modelTitle)
 
-        let popup = NSPopUpButton(frame: NSRect(x: 24, y: 45, width: W - 48, height: 28), pullsDown: false)
-        popup.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        popup.target = self; popup.action = #selector(modelSelected(_:))
-        content.addSubview(popup)
+            let popup = NSPopUpButton(frame: NSRect(x: 24, y: 45, width: W - 48, height: 28), pullsDown: false)
+            popup.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            popup.target = self; popup.action = #selector(modelSelected(_:))
+            content.addSubview(popup)
 
-        popup.addItem(withTitle: L10n.s("loading"))
-        fetchOllamaModels { [weak self] models in
-            guard let self = self else { return }
-            popup.removeAllItems()
-            if models.isEmpty { popup.addItem(withTitle: L10n.s("no_ollama")) }
-            else {
-                for m in models { popup.addItem(withTitle: m.name) }
-                if let idx = models.firstIndex(where: { $0.name == self.currentModel }) {
-                    popup.selectItem(at: idx)
+            popup.addItem(withTitle: L10n.s("loading"))
+            fetchOllamaModels { [weak self] models in
+                guard let self = self else { return }
+                popup.removeAllItems()
+                if models.isEmpty { popup.addItem(withTitle: L10n.s("no_ollama")) }
+                else {
+                    for m in models { popup.addItem(withTitle: m.name) }
+                    if let idx = models.firstIndex(where: { $0.name == self.currentModel }) {
+                        popup.selectItem(at: idx)
+                    }
                 }
             }
+        } else {
+            let aiDisabled = PixelLabel()
+            aiDisabled.text = L10n.s("ai_disabled")
+            aiDisabled.fontSize = 12
+            aiDisabled.frame = NSRect(x: 20, y: 56, width: W - 40, height: 20)
+            content.addSubview(aiDisabled)
         }
     }
 
@@ -1275,6 +1294,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         }
         for (i, cfg) in catConfigs.enumerated() { createInstance(config: cfg, index: i) }
         if dockVisible { for cat in catInstances { cat.showOnDock(dockH: dockHeight) } }
+        else { hideAllFromDock() }
 
         // Status bar
         setupStatusItem()
@@ -1373,6 +1393,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func setModel(_ model: String) {
+        guard AI_INTEGRATION_ENABLED else { return }
         selectedModel = model; UserDefaults.standard.set(model, forKey: MODEL_KEY)
         for cat in catInstances { cat.ollamaChat.model = model }
     }
