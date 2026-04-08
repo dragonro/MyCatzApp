@@ -8,7 +8,7 @@ let BEHAVIOR_SEC: TimeInterval = 1.0
 let DOCK_POLL_SEC: TimeInterval = 5.0
 let MOUSE_POLL_SEC: TimeInterval = 1.0 / 30.0
 let WINDOW_TRACK_SEC: TimeInterval = 1.0 / 30.0
-let RELOCATION_FADE_SEC: TimeInterval = 0.3
+let RELOCATION_FADE_SEC: TimeInterval = 0.7
 let CUSTOM_COLOR_LUMINANCE_DIVISOR: CGFloat = 2.4
 let WALK_SPEED: CGFloat = 4
 let SETTINGS_PREVIEW_TAG = 9001
@@ -885,7 +885,20 @@ class CatInstance {
             if posMode == .onDock {
                 x = max(0, min(x, screenW - displayW))
             } else if let wb = winBounds {
-                x = max(wb.minX, min(x, wb.maxX - displayW))
+                let minX = wb.minX
+                let maxX = max(minX, wb.maxX - displayW)
+                let clampedX = max(minX, min(x, maxX))
+                let hitLeftEdge = clampedX <= minX + 0.5 && direction == "west"
+                let hitRightEdge = clampedX >= maxX - 0.5 && direction == "east"
+                x = clampedX
+                if hitLeftEdge || hitRightEdge {
+                    // At window bounds, stop and face inward instead of sliding off-window.
+                    state = .idle
+                    frameIndex = 0
+                    idleTicks = 0
+                    destX = x
+                    direction = hitLeftEdge ? "east" : "west"
+                }
             }
             window.setFrameOrigin(NSPoint(x: x, y: y))
             if let b = chatBubble, b.isVisible { b.show(aboveCatAt: window.frame) }
