@@ -8,7 +8,7 @@ let BEHAVIOR_SEC: TimeInterval = 1.0
 let DOCK_POLL_SEC: TimeInterval = 5.0
 let MOUSE_POLL_SEC: TimeInterval = 1.0 / 30.0
 let WINDOW_TRACK_SEC: TimeInterval = 1.0 / 30.0
-let RELOCATION_FADE_SEC: TimeInterval = 0.5
+let RELOCATION_FADE_SEC: TimeInterval = 0.3
 let CUSTOM_COLOR_LUMINANCE_DIVISOR: CGFloat = 2.4
 let WALK_SPEED: CGFloat = 4
 let SETTINGS_PREVIEW_TAG = 9001
@@ -18,7 +18,7 @@ let MODEL_KEY = "ollamaModel"
 let LANG_KEY = "catLang"
 let OLLAMA_URL = "http://localhost:11434"
 let AI_INTEGRATION_ENABLED = false
-let APP_VERSION = "1.0.1"
+let APP_VERSION = "1.0.2"
 let DEFAULT_SCALE: CGFloat = 1.0
 let MIN_SCALE: CGFloat = 0.5
 let MAX_SCALE: CGFloat = 3.0
@@ -776,6 +776,8 @@ class CatInstance {
     var posMode: PosMode = .hidden
     var winBounds: NSRect?
     var isRelocating = false
+    var pendingRelocationOrigin: NSPoint?
+    var pendingRelocationMode: PosMode?
 
     var chatBubble: ChatBubbleController?
     var ollamaChat: OllamaChat!
@@ -1067,10 +1069,12 @@ class CatInstance {
 
     func relocateWithFade(to newOrigin: NSPoint, newMode: PosMode) {
         if isRelocating {
-            posMode = newMode
-            window.alphaValue = 1
-            window.setFrameOrigin(newOrigin)
-            window.orderFront(nil)
+            // Keep transition stable: while relocating, ignore opposite-mode requests
+            // that can be emitted by concurrent timers. Allow only same-mode target updates.
+            if newMode == posMode {
+                pendingRelocationOrigin = newOrigin
+                pendingRelocationMode = newMode
+            }
             return
         }
 
@@ -1086,6 +1090,8 @@ class CatInstance {
         }
 
         isRelocating = true
+        pendingRelocationOrigin = nil
+        pendingRelocationMode = nil
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = RELOCATION_FADE_SEC
             window.animator().alphaValue = 0
@@ -1097,7 +1103,15 @@ class CatInstance {
                 ctx.duration = RELOCATION_FADE_SEC
                 self.window.animator().alphaValue = 1
             }) { [weak self] in
-                self?.isRelocating = false
+                guard let self = self else { return }
+                self.isRelocating = false
+                if let pOrigin = self.pendingRelocationOrigin, let pMode = self.pendingRelocationMode, pMode == self.posMode {
+                    self.pendingRelocationOrigin = nil
+                    self.pendingRelocationMode = nil
+                    if self.window.frame.origin != pOrigin {
+                        self.relocateWithFade(to: pOrigin, newMode: pMode)
+                    }
+                }
             }
         }
     }
@@ -1520,8 +1534,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
             catConfigs = [def]; saveConfigs(catConfigs)
         }
         for (i, cfg) in catConfigs.enumerated() { createInstance(config: cfg, index: i) }
-        if dockVisible { for cat in catInstances { cat.showOnDock(dockH: dockHeight) } }
-        else { hideAllFromDock() }
+        hideAllFromDock()
 
         // Status bar
         setupStatusItem()
@@ -1567,9 +1580,10 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         createInstance(config: cfg, index: catInstances.count)
 
         let cat = catInstances.last!
-        if dockVisible { cat.showOnDock(dockH: dockHeight) }
-        else if let f = frontmostWindowFrame() {
+        if let f = frontmostWindowFrame() {
             cat.moveToWindow(f, index: catInstances.count - 1, total: catInstances.count)
+        } else {
+            cat.hideCompletely()
         }
 
         settingsCtrl?.selectedColorId = colorId
@@ -1629,8 +1643,8 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         recomputeSize()
         for cat in catInstances {
             cat.applyScale(newW: displayW, newH: displayH, meta: meta, catDir: catDir)
-            if cat.posMode == .onDock { cat.showOnDock(dockH: dockHeight) }
         }
+        if catInstances.contains(where: { $0.posMode == .onDock }) { hideAllFromDock() }
     }
 
     func setLanguage(_ lang: String) {
@@ -1702,7 +1716,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
 
         if nearBottom || (dockVisible && inDockArea) {
             hideTimer?.invalidate(); hideTimer = nil
-            if !dockVisible { showAllOnDock() }
+            if !dockVisible { hideAllFromDock() }
         } else if dockVisible && catInstances.allSatisfy({ $0.posMode == .onDock }) {
             if hideTimer == nil {
                 hideTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
@@ -1720,24 +1734,21 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
             if !autoHide {
                 dockHeight = fixedDockHeight()
                 if dockHeight < 10 { dockHeight = estimatedDockHeight() }
-                showAllOnDock()
+                hideAllFromDock()
             } else { dockHeight = estimatedDockHeight(); hideAllFromDock() }
         }
         if !autoHide {
             let dh = fixedDockHeight()
             if dh > 10 && abs(dh - dockHeight) > 2 {
                 dockHeight = dh
-                for cat in catInstances where cat.posMode == .onDock && !cat.dragging {
-                    cat.showOnDock(dockH: dockHeight)
-                }
             }
-            if !dockVisible { showAllOnDock() }
+            if !dockVisible { hideAllFromDock() }
         }
     }
 
     func showAllOnDock() {
-        dockVisible = true
-        for cat in catInstances { cat.showOnDock(dockH: dockHeight) }
+        // Window-only mode: never place cats on Dock.
+        hideAllFromDock()
     }
 
     func hideAllFromDock() {
