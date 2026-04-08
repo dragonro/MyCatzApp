@@ -40,9 +40,9 @@ cat > CATAI.app/Contents/Info.plist << 'PLIST'
 	<key>CFBundleDisplayName</key>
 	<string>CATAI</string>
 	<key>CFBundleVersion</key>
-	<string>1.0</string>
+	<string>1.0.1</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.0.1</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>
