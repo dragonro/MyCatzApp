@@ -3,5 +3,7 @@ cat
 CATAI.app/
 CATAI.icns
 CATAI.iconset/
+MyCatzApp.app/
+MyCatzApp.icns
 .DS_Store
 *.swp
