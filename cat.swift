@@ -804,6 +804,7 @@ class CatInstance {
 
     // Chat
     func toggleChat() {
+        guard AI_INTEGRATION_ENABLED else { return }
         guard let b = chatBubble else { return }
         if b.isVisible { b.hide() } else { b.show(aboveCatAt: window.frame) }
     }
