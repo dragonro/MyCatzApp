@@ -454,6 +454,90 @@ class PixelLabel: NSView {
     }
 }
 
+class ModalColorWell: NSColorWell {
+    weak var ownerWindow: NSWindow?
+    private var blockView: NSView?
+    private var colorPanelObserver: NSObjectProtocol?
+    private var localEventMonitor: Any?
+
+    class BlockingView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { self }
+        override func mouseDown(with event: NSEvent) {}
+        override func mouseUp(with event: NSEvent) {}
+        override func mouseDragged(with event: NSEvent) {}
+        override func rightMouseDown(with event: NSEvent) {}
+        override func otherMouseDown(with event: NSEvent) {}
+    }
+
+    private func addBlockingOverlay() {
+        guard let content = ownerWindow?.contentView, blockView == nil else { return }
+        let blocker = BlockingView(frame: content.bounds)
+        blocker.autoresizingMask = [.width, .height]
+        blocker.wantsLayer = true
+        blocker.layer?.backgroundColor = NSColor.clear.cgColor
+        content.addSubview(blocker, positioned: .above, relativeTo: nil)
+        blockView = blocker
+    }
+
+    private func removeBlockingOverlay() {
+        blockView?.removeFromSuperview()
+        blockView = nil
+    }
+
+    private func installEventMonitor() {
+        guard localEventMonitor == nil else { return }
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+                       .otherMouseDown, .otherMouseUp, .leftMouseDragged, .rightMouseDragged]
+        ) { [weak self] event in
+            guard let self = self else { return event }
+            guard NSColorPanel.shared.isVisible else { return event }
+            if event.window === self.ownerWindow { return nil }
+            return event
+        }
+    }
+
+    private func removeEventMonitor() {
+        if let m = localEventMonitor {
+            NSEvent.removeMonitor(m)
+            localEventMonitor = nil
+        }
+    }
+
+    override func activate(_ exclusive: Bool) {
+        super.activate(exclusive)
+        let panel = NSColorPanel.shared
+        panel.level = .modalPanel
+        panel.hidesOnDeactivate = false
+
+        if let parent = panel.parent { parent.removeChildWindow(panel) }
+        if let ownerWindow = ownerWindow { ownerWindow.addChildWindow(panel, ordered: .above) }
+        addBlockingOverlay()
+        installEventMonitor()
+        colorPanelObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            self?.removeBlockingOverlay()
+            self?.removeEventMonitor()
+        }
+
+        panel.orderFront(nil)
+        panel.makeKey()
+    }
+
+    override func deactivate() {
+        super.deactivate()
+        let panel = NSColorPanel.shared
+        if let parent = panel.parent { parent.removeChildWindow(panel) }
+        if let obs = colorPanelObserver {
+            NotificationCenter.default.removeObserver(obs)
+            colorPanelObserver = nil
+        }
+        removeBlockingOverlay()
+        removeEventMonitor()
+    }
+}
+
 // MARK: - KeyableWindow
 
 class KeyableWindow: NSWindow {
@@ -592,7 +676,7 @@ class PixelTail: NSView {
 
 class CatInstance {
     var config: CatConfig
-    let colorDef: CatColorDef
+    var colorDef: CatColorDef
 
     var window: NSWindow!
     var imageView: NSImageView!
@@ -689,6 +773,14 @@ class CatInstance {
         imageView.frame = NSRect(x: 0, y: 0, width: displayW, height: displayH)
         imageView.image = currentImage()
         window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    func updateColor(_ newColorDef: CatColorDef, meta: Metadata, catDir: String, lang: String) {
+        colorDef = newColorDef
+        loadAssets(meta: meta, catDir: catDir)
+        imageView.image = currentImage()
+        updateSystemPrompt(lang: lang)
+        if let b = chatBubble, b.isVisible { b.show(aboveCatAt: window.frame) }
     }
 
     var fallbackImage: NSImage {
@@ -1054,6 +1146,7 @@ class SettingsWindowController {
     var onAdd: ((String) -> Void)?
     var onRemove: ((String) -> Void)?
     var onRename: ((String, String) -> Void)?
+    var onColorChanged: ((String, String) -> Void)?
     var onScaleChanged: ((CGFloat) -> Void)?
     var onModelChanged: ((String) -> Void)?
     var onLangChanged: ((String) -> Void)?
@@ -1152,7 +1245,8 @@ class SettingsWindowController {
             nameLabel.frame = NSRect(x: 24, y: H - 260, width: 55, height: 20)
             content.addSubview(nameLabel)
 
-            let nf = NSTextField(frame: NSRect(x: 82, y: H - 262, width: W - 112, height: 24))
+            let colorBtnW: CGFloat = 50
+            let nf = NSTextField(frame: NSRect(x: 82, y: H - 262, width: W - 124 - colorBtnW, height: 24))
             nf.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
             nf.stringValue = cfg?.name ?? cd.names[L10n.lang] ?? ""
             nf.bezelStyle = .squareBezel
@@ -1161,6 +1255,14 @@ class SettingsWindowController {
             nf.focusRingType = .none
             nf.target = self; nf.action = #selector(nameEdited(_:))
             content.addSubview(nf)
+
+            let colorWell = ModalColorWell(frame: NSRect(x: W - 24 - colorBtnW, y: H - 262, width: colorBtnW, height: 24))
+            colorWell.ownerWindow = window
+            colorWell.color = cd.color
+            colorWell.isContinuous = false
+            colorWell.target = self
+            colorWell.action = #selector(colorSelected(_:))
+            content.addSubview(colorWell)
 
             // Personality
             let traitLabel = PixelLabel()
@@ -1227,12 +1329,6 @@ class SettingsWindowController {
                     }
                 }
             }
-        } else {
-            let aiDisabled = PixelLabel()
-            aiDisabled.text = L10n.s("ai_disabled")
-            aiDisabled.fontSize = 12
-            aiDisabled.frame = NSRect(x: 20, y: 56, width: W - 40, height: 20)
-            content.addSubview(aiDisabled)
         }
     }
 
@@ -1244,6 +1340,40 @@ class SettingsWindowController {
     @objc func modelSelected(_ sender: NSPopUpButton) {
         guard let t = sender.selectedItem?.title, !t.hasPrefix("(") else { return }
         currentModel = t; onModelChanged?(t)
+    }
+
+    @objc func colorSelected(_ sender: Any?) {
+        guard let oldColorId = selectedColorId else { return }
+        let pickedColor: NSColor
+        if let well = sender as? NSColorWell { pickedColor = well.color }
+        else if let panel = sender as? NSColorPanel { pickedColor = panel.color }
+        else { pickedColor = NSColorPanel.shared.color }
+
+        guard let newColorId = nearestCatColorId(for: pickedColor) else { return }
+        guard newColorId != oldColorId else { return }
+        selectedColorId = newColorId
+        onColorChanged?(oldColorId, newColorId)
+    }
+
+    func nearestCatColorId(for color: NSColor) -> String? {
+        guard let target = color.usingColorSpace(.sRGB) else { return nil }
+        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
+        target.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
+
+        var bestId: String?
+        var bestDist = CGFloat.greatestFiniteMagnitude
+        for c in catColors {
+            guard let ref = c.color.usingColorSpace(.sRGB) else { continue }
+            var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
+            ref.getRed(&rr, green: &rg, blue: &rb, alpha: &ra)
+            let dr = tr - rr, dg = tg - rg, db = tb - rb
+            let dist = dr * dr + dg * dg + db * db
+            if dist < bestDist {
+                bestDist = dist
+                bestId = c.id
+            }
+        }
+        return bestId
     }
 
     func show() {
@@ -1412,6 +1542,27 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func changeCatColor(from oldColorId: String, to newColorId: String) {
+        guard oldColorId != newColorId else { return }
+        guard let cfgIdx = catConfigs.firstIndex(where: { $0.colorId == oldColorId }) else { return }
+        guard !catConfigs.contains(where: { $0.colorId == newColorId }) else {
+            settingsCtrl?.selectedColorId = oldColorId
+            settingsCtrl?.refresh()
+            return
+        }
+        guard let newDef = colorDef(newColorId) else { return }
+        guard let instIdx = catInstances.firstIndex(where: { $0.colorDef.id == oldColorId }) else { return }
+
+        catConfigs[cfgIdx].colorId = newColorId
+        saveConfigs(catConfigs)
+        let inst = catInstances[instIdx]
+        inst.config.colorId = newColorId
+        inst.updateColor(newDef, meta: meta, catDir: catDir, lang: L10n.lang)
+
+        settingsCtrl?.selectedColorId = newColorId
+        settingsCtrl?.refresh()
+    }
+
     // MARK: Size & Model
 
     func recomputeSize() {
@@ -1474,6 +1625,9 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         ctrl.onAdd = { [weak self] colorId in self?.addCat(colorId: colorId) }
         ctrl.onRemove = { [weak self] colorId in self?.removeCat(colorId: colorId) }
         ctrl.onRename = { [weak self] colorId, name in self?.renameCat(colorId: colorId, name: name) }
+        ctrl.onColorChanged = { [weak self] oldColorId, newColorId in
+            self?.changeCatColor(from: oldColorId, to: newColorId)
+        }
         ctrl.onScaleChanged = { [weak self] v in self?.applyNewScale(v) }
         ctrl.onModelChanged = { [weak self] m in self?.setModel(m) }
         ctrl.onLangChanged = { [weak self] l in self?.setLanguage(l) }
