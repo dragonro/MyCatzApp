@@ -18,7 +18,7 @@ let MODEL_KEY = "ollamaModel"
 let LANG_KEY = "catLang"
 let OLLAMA_URL = "http://localhost:11434"
 let AI_INTEGRATION_ENABLED = false
-let APP_VERSION = "1.0.4"
+let APP_VERSION = "1.0.5"
 let GITHUB_REPO_OWNER = "dragonro"
 let GITHUB_REPO_NAME = "MyCatzApp"
 let DEFAULT_SCALE: CGFloat = 1.0
@@ -2033,6 +2033,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                     kCGNullWindowID) as? [[String: Any]] else { return nil }
         let myPID = ProcessInfo.processInfo.processIdentifier
+        let desktopMaxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? screenH
         for w in list {
             guard let pid = w[kCGWindowOwnerPID as String] as? Int32, pid != myPID,
                   let bounds = w[kCGWindowBounds as String] as? [String: Any],
@@ -2043,7 +2044,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
                   let wH = (bounds["Height"] as? NSNumber)?.doubleValue,
                   wW > 100, wH > 100
             else { continue }
-            let cocoaY = screenH - CGFloat(wY) - CGFloat(wH)
+            let cocoaY = desktopMaxY - CGFloat(wY) - CGFloat(wH)
             return NSRect(x: CGFloat(wX), y: cocoaY, width: CGFloat(wW), height: CGFloat(wH))
         }
         return nil

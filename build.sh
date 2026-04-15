@@ -40,9 +40,9 @@ cat > MyCatzApp.app/Contents/Info.plist << 'PLIST'
 	<key>CFBundleDisplayName</key>
 	<string>MyCatzApp</string>
 	<key>CFBundleVersion</key>
-	<string>1.0.4</string>
+	<string>1.0.5</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.4</string>
+	<string>1.0.5</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>
