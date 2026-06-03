@@ -40,9 +40,9 @@ cat > MyCatzApp.app/Contents/Info.plist << 'PLIST'
 	<key>CFBundleDisplayName</key>
 	<string>MyCatzApp</string>
 	<key>CFBundleVersion</key>
-	<string>1.0.5</string>
+	<string>1.0.6</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.5</string>
+	<string>1.0.6</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>
@@ -58,7 +58,7 @@ cat > MyCatzApp.app/Contents/Info.plist << 'PLIST'
 PLIST
 
 # Compile
-swiftc -O -o MyCatzApp.app/Contents/MacOS/MyCatzApp cat.swift -framework AppKit -framework Foundation
+swiftc -O -o MyCatzApp.app/Contents/MacOS/MyCatzApp cat.swift -framework AppKit -framework Foundation -framework ServiceManagement
 
 echo "✓ MyCatzApp.app built successfully!"
 echo "Run: open MyCatzApp.app"

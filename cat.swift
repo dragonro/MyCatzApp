@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 // MARK: - Constants
 
@@ -16,9 +17,10 @@ let CATS_KEY = "catConfigs"
 let SCALE_KEY = "catScale"
 let MODEL_KEY = "ollamaModel"
 let LANG_KEY = "catLang"
+let START_AT_LOGIN_KEY = "startAtLogin"
 let OLLAMA_URL = "http://localhost:11434"
 let AI_INTEGRATION_ENABLED = false
-let APP_VERSION = "1.0.5"
+let APP_VERSION = "1.0.6"
 let GITHUB_REPO_OWNER = "dragonro"
 let GITHUB_REPO_NAME = "MyCatzApp"
 let DEFAULT_SCALE: CGFloat = 1.0
@@ -70,6 +72,9 @@ struct L10n {
         "ai_disabled": ["fr": "(IA désactivée)", "en": "(AI disabled)", "es": "(IA desactivada)"],
         "err": ["fr": "Mrrp... pas de connexion 😿", "en": "Mrrp... no connection 😿", "es": "Mrrp... sin conexión 😿"],
         "lang_label": ["fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"],
+        "start_at_login": ["fr": "Lancer à l'ouverture de session", "en": "Start at login", "es": "Iniciar sesión automáticamente"],
+        "login_item_needs_approval": ["fr": "Autorisation requise dans Réglages Système", "en": "Approval required in System Settings", "es": "Requiere aprobación en Ajustes del Sistema"],
+        "login_item_failed": ["fr": "Impossible de modifier ce réglage", "en": "Could not change this setting", "es": "No se pudo cambiar este ajuste"],
     ]
 
     static let meows: [String: [String]] = [
@@ -206,6 +211,44 @@ func effectiveColorDef(for cfg: CatConfig) -> CatColorDef? {
         hueShift: 0, satMul: 1, briOff: 0,
         traits: base.traits, names: base.names, skills: base.skills
     )
+}
+
+// MARK: - Login Item
+
+enum LoginItemState {
+    case enabled
+    case disabled
+    case requiresApproval
+    case unavailable
+}
+
+func loginItemState() -> LoginItemState {
+    guard Bundle.main.bundleIdentifier != nil else { return .unavailable }
+    switch SMAppService.mainApp.status {
+    case .enabled: return .enabled
+    case .notRegistered: return .disabled
+    case .requiresApproval: return .requiresApproval
+    case .notFound: return .unavailable
+    @unknown default: return .unavailable
+    }
+}
+
+@discardableResult
+func setStartAtLogin(_ enabled: Bool) -> Result<LoginItemState, Error> {
+    do {
+        if enabled {
+            if SMAppService.mainApp.status != .enabled {
+                try SMAppService.mainApp.register()
+            }
+        } else if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval {
+            try SMAppService.mainApp.unregister()
+        }
+        UserDefaults.standard.set(enabled, forKey: START_AT_LOGIN_KEY)
+        return .success(loginItemState())
+    } catch {
+        UserDefaults.standard.set(loginItemState() == .enabled, forKey: START_AT_LOGIN_KEY)
+        return .failure(error)
+    }
 }
 
 // MARK: - Ollama API
@@ -509,6 +552,51 @@ class PixelSlider: NSView {
         let loc = convert(e.locationInWindow, from: nil); let m: CGFloat = px * 4
         let ratio = max(0, min(1, (loc.x - m) / (bounds.width - m * 2)))
         value = minValue + (maxValue - minValue) * ratio; onChange?(value)
+    }
+}
+
+class PixelCheckbox: NSControl {
+    var title = "" { didSet { needsDisplay = true } }
+    var isOn = false { didSet { needsDisplay = true } }
+    override var isEnabled: Bool { didSet { needsDisplay = true } }
+    var onToggle: ((Bool) -> Void)?
+    private let px: CGFloat = 3
+
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let box = NSRect(x: 0, y: (bounds.height - 18) / 2, width: 18, height: 18)
+        let borderColor = isEnabled ? NSColor(red: 0.3, green: 0.2, blue: 0.1, alpha: 1) : NSColor.gray
+        let fillColor = isEnabled ? NSColor(red: 1, green: 0.98, blue: 0.93, alpha: 1) : NSColor(white: 0.85, alpha: 1)
+        borderColor.set()
+        NSBezierPath(rect: box).fill()
+        fillColor.set()
+        NSBezierPath(rect: box.insetBy(dx: px, dy: px)).fill()
+
+        if isOn {
+            let markColor = isEnabled ? NSColor(red: 1.0, green: 0.45, blue: 0.1, alpha: 1) : NSColor.gray
+            markColor.set()
+            NSBezierPath(rect: NSRect(x: box.minX + 5, y: box.minY + 5, width: px, height: px * 2)).fill()
+            NSBezierPath(rect: NSRect(x: box.minX + 8, y: box.minY + 3, width: px, height: px * 3)).fill()
+            NSBezierPath(rect: NSRect(x: box.minX + 11, y: box.minY + 8, width: px, height: px * 2)).fill()
+        }
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: isEnabled ? NSColor(red: 0.3, green: 0.2, blue: 0.1, alpha: 1) : NSColor.gray,
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
+        ]
+        let str = NSAttributedString(string: title, attributes: attrs)
+        str.draw(in: NSRect(x: 26, y: (bounds.height - str.size().height) / 2,
+                            width: bounds.width - 26, height: str.size().height))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        window?.makeFirstResponder(self)
+        isOn.toggle()
+        sendAction(action, to: target)
+        onToggle?(isOn)
     }
 }
 
@@ -1318,11 +1406,14 @@ class SettingsWindowController {
     var onScaleChanged: ((CGFloat) -> Void)?
     var onModelChanged: ((String) -> Void)?
     var onLangChanged: ((String) -> Void)?
+    var onStartAtLoginChanged: ((Bool) -> LoginItemState)?
+    var getLoginItemState: (() -> LoginItemState)?
     var getConfigs: (() -> [CatConfig])?
     var getPreview: ((String) -> NSImage?)?
 
     var currentScale: CGFloat = 1.0
     var currentModel = ""
+    var loginItemMessage = ""
     var selectedColorId: String?
     var sizeLabel: PixelLabel?
     var scaleTimer: Timer?
@@ -1474,6 +1565,34 @@ class SettingsWindowController {
         }
         content.addSubview(slider)
 
+        let loginState = getLoginItemState?() ?? .unavailable
+        let startAtLogin = PixelCheckbox(frame: NSRect(x: 24, y: 76, width: W - 48, height: 28))
+        startAtLogin.title = L10n.s("start_at_login")
+        startAtLogin.isOn = loginState == .enabled || loginState == .requiresApproval
+        startAtLogin.isEnabled = true
+        startAtLogin.onToggle = { [weak self] enabled in
+            guard let self = self else { return }
+            let newState = self.onStartAtLoginChanged?(enabled) ?? .unavailable
+            switch newState {
+            case .requiresApproval:
+                self.loginItemMessage = L10n.s("login_item_needs_approval")
+            case .unavailable:
+                self.loginItemMessage = L10n.s("login_item_failed")
+            default:
+                self.loginItemMessage = ""
+            }
+            self.buildContent()
+        }
+        content.addSubview(startAtLogin)
+
+        let loginMessage = PixelLabel()
+        loginMessage.text = loginState == .requiresApproval ? L10n.s("login_item_needs_approval") : loginItemMessage
+        loginMessage.fontSize = 9
+        loginMessage.alignment = .left
+        loginMessage.textColor = NSColor(red: 0.65, green: 0.2, blue: 0.1, alpha: 1)
+        loginMessage.frame = NSRect(x: 24, y: 55, width: W - 48, height: 18)
+        content.addSubview(loginMessage)
+
         if AI_INTEGRATION_ENABLED {
             // Model section
             let modelTitle = PixelLabel()
@@ -1590,6 +1709,7 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         if s > 0 { catScale = CGFloat(s) }
         selectedModel = UserDefaults.standard.string(forKey: MODEL_KEY) ?? "gemma4:latest"
         L10n.lang = UserDefaults.standard.string(forKey: LANG_KEY) ?? "fr"
+        UserDefaults.standard.set(loginItemState() == .enabled, forKey: START_AT_LOGIN_KEY)
 
         recomputeSize()
 
@@ -1737,6 +1857,16 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         guard AI_INTEGRATION_ENABLED else { return }
         selectedModel = model; UserDefaults.standard.set(model, forKey: MODEL_KEY)
         for cat in catInstances { cat.ollamaChat.model = model }
+    }
+
+    func setStartAtLoginPreference(_ enabled: Bool) -> LoginItemState {
+        switch setStartAtLogin(enabled) {
+        case .success(let state):
+            return state
+        case .failure(let error):
+            NSLog("Failed to update login item: \(error.localizedDescription)")
+            return .unavailable
+        }
     }
 
     // MARK: Status Bar
@@ -1966,6 +2096,10 @@ class CatAppDelegate: NSObject, NSApplicationDelegate {
         ctrl.onScaleChanged = { [weak self] v in self?.applyNewScale(v) }
         ctrl.onModelChanged = { [weak self] m in self?.setModel(m) }
         ctrl.onLangChanged = { [weak self] l in self?.setLanguage(l) }
+        ctrl.getLoginItemState = { loginItemState() }
+        ctrl.onStartAtLoginChanged = { [weak self] enabled in
+            self?.setStartAtLoginPreference(enabled) ?? .unavailable
+        }
         ctrl.setup(scale: catScale, model: selectedModel)
         ctrl.show()
     }

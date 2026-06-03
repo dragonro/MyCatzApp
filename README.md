@@ -69,6 +69,7 @@ Open from the menu bar icon:
 - **Name** — Rename each cat
 - **Color** — Pick a custom cat color
 - **Size** — Scale cats
+- **Start at login** — Register/unregister the app as a macOS login item
 
 ## How It Works
 
