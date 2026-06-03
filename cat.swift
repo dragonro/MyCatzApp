@@ -20,7 +20,7 @@ let LANG_KEY = "catLang"
 let START_AT_LOGIN_KEY = "startAtLogin"
 let OLLAMA_URL = "http://localhost:11434"
 let AI_INTEGRATION_ENABLED = false
-let APP_VERSION = "1.0.6"
+let APP_VERSION = "1.0.7"
 let GITHUB_REPO_OWNER = "dragonro"
 let GITHUB_REPO_NAME = "MyCatzApp"
 let DEFAULT_SCALE: CGFloat = 1.0
@@ -495,6 +495,17 @@ func loadTintAndScale(path: String, to size: NSSize, color: CatColorDef) -> NSIm
     }
 }
 
+func pixelFont(ofSize size: CGFloat, weight: NSFont.Weight = .bold) -> NSFont {
+    if weight == .regular {
+        return NSFont(name: "Menlo-Regular", size: size)
+            ?? NSFont.userFixedPitchFont(ofSize: size)
+            ?? NSFont.systemFont(ofSize: size)
+    }
+    return NSFont(name: "Menlo-Bold", size: size)
+        ?? NSFont.userFixedPitchFont(ofSize: size)
+        ?? NSFont.boldSystemFont(ofSize: size)
+}
+
 // MARK: - Pixel Art UI Components
 
 class PixelBorder: NSView {
@@ -584,7 +595,7 @@ class PixelCheckbox: NSControl {
 
         let attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: isEnabled ? NSColor(red: 0.3, green: 0.2, blue: 0.1, alpha: 1) : NSColor.gray,
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
+            .font: pixelFont(ofSize: 11, weight: .bold),
         ]
         let str = NSAttributedString(string: title, attributes: attrs)
         str.draw(in: NSRect(x: 26, y: (bounds.height - str.size().height) / 2,
@@ -610,7 +621,7 @@ class PixelLabel: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: textColor,
-            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold),
+            .font: pixelFont(ofSize: fontSize, weight: .bold),
         ]
         let str = NSAttributedString(string: text, attributes: attrs)
         if wraps {
@@ -767,7 +778,7 @@ class ChatBubbleController {
     func computeTextHeight(for text: String) -> CGFloat {
         let style = NSMutableParagraphStyle(); style.lineBreakMode = .byWordWrapping
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold), .paragraphStyle: style]
+            .font: pixelFont(ofSize: 11, weight: .bold), .paragraphStyle: style]
         let rect = NSAttributedString(string: text, attributes: attrs)
             .boundingRect(with: NSSize(width: textW, height: 9999),
                           options: [.usesLineFragmentOrigin, .usesFontLeading])
@@ -806,7 +817,7 @@ class ChatBubbleController {
         content.addSubview(responseLabel)
 
         inputField = NSTextField(frame: NSRect(x: 20, y: tailH + padding, width: textW, height: inputH))
-        inputField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        inputField.font = pixelFont(ofSize: 11, weight: .regular)
         inputField.placeholderString = L10n.s("talk")
         inputField.isBordered = true; inputField.bezelStyle = .squareBezel
         inputField.backgroundColor = NSColor(red: 1, green: 0.98, blue: 0.93, alpha: 1)
@@ -1185,7 +1196,7 @@ class CatInstance {
         let text = L10n.randomMeow()
         let fontSize: CGFloat = 11
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)]
+            .font: pixelFont(ofSize: fontSize, weight: .bold)]
         let textSize = (text as NSString).size(withAttributes: attrs)
         let padX: CGFloat = 16; let padY: CGFloat = 10
         let bw = ceil(textSize.width) + padX * 2
@@ -1507,7 +1518,7 @@ class SettingsWindowController {
 
             let colorBtnW: CGFloat = 50
             let nf = NSTextField(frame: NSRect(x: 82, y: H - 262, width: W - 124 - colorBtnW, height: 24))
-            nf.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            nf.font = pixelFont(ofSize: 12, weight: .regular)
             nf.stringValue = cfg?.name ?? cd.names[L10n.lang] ?? ""
             nf.bezelStyle = .squareBezel
             nf.backgroundColor = NSColor(red: 1, green: 0.98, blue: 0.93, alpha: 1)
@@ -1601,7 +1612,7 @@ class SettingsWindowController {
             content.addSubview(modelTitle)
 
             let popup = NSPopUpButton(frame: NSRect(x: 24, y: 45, width: W - 48, height: 28), pullsDown: false)
-            popup.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            popup.font = pixelFont(ofSize: 11, weight: .regular)
             popup.target = self; popup.action = #selector(modelSelected(_:))
             content.addSubview(popup)
 

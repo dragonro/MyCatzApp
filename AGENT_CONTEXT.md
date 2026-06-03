@@ -2,14 +2,14 @@
 
 ## Current State
 
-- Current branch: `release-1.0.6`
-- App version: `1.0.6`
+- Current branch: `release-1.0.7`
+- App version: `1.0.7`
 - Main source file: `cat.swift`
 - Build script: `build.sh`
 - Generated bundle: `MyCatzApp.app`
 - Current working tree has uncommitted changes for:
   - Start-at-login setting
-  - Version bump from `1.0.5` to `1.0.6`
+  - Version bump from `1.0.6` to `1.0.7`
   - README settings documentation
 
 ## Project Summary
@@ -108,7 +108,7 @@ If the checkbox appears inert, first confirm the rebuilt app is actually running
 
 Current version references:
 
-- `cat.swift`: `APP_VERSION = "1.0.6"`
+- `cat.swift`: `APP_VERSION = "1.0.7"`
 - `build.sh`: generated `CFBundleVersion`
 - `build.sh`: generated `CFBundleShortVersionString`
 - `MyCatzApp.app/Contents/Info.plist`: generated during build
@@ -125,8 +125,8 @@ The following validation has been run successfully:
 
 Generated bundle values verified:
 
-- `CFBundleShortVersionString = 1.0.6`
-- `CFBundleVersion = 1.0.6`
+- `CFBundleShortVersionString = 1.0.7`
+- `CFBundleVersion = 1.0.7`
 
 ## Recommended Next Steps
 
@@ -147,7 +147,7 @@ git status --short --branch
 Find version references:
 
 ```bash
-rg -n "1\\.0\\.6|APP_VERSION|CFBundleVersion|CFBundleShortVersionString" cat.swift build.sh MyCatzApp.app/Contents/Info.plist
+rg -n "1\\.0\\.7|APP_VERSION|CFBundleVersion|CFBundleShortVersionString" cat.swift build.sh MyCatzApp.app/Contents/Info.plist
 ```
 
 Verify generated plist:
